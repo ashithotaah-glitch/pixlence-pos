@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#184d3b">
+    <title>OmniPOS | Offline Billing & Inventory</title>
+    <link rel="icon" href="./icon.svg" type="image/svg+xml">
+    <link rel="manifest" href="./manifest.webmanifest">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Main navigation">
+        <div class="brand">
+          <span class="brand-mark">OP</span>
+          <div>
+            <strong>OmniPOS</strong>
+            <small>Retail + ecommerce sync</small>
+          </div>
+        </div>
+        <nav class="nav" aria-label="POS sections">
+          <button class="nav-item active" data-view="billing" type="button">Billing</button>
+          <button class="nav-item" data-view="products" type="button">Products</button>
+          <button class="nav-item" data-view="inventory" type="button">Inventory</button>
+          <button class="nav-item" data-view="orders" type="button">Orders</button>
+          <button class="nav-item" data-view="sync" type="button">Channels</button>
+          <button class="nav-item" data-view="reports" type="button">Reports</button>
+        </nav>
+        <div class="sidebar-card">
+          <span class="status-dot"></span>
+          <div>
+            <strong id="connectionLabel">Offline ready</strong>
+            <small id="syncLabel">Local queue active</small>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">In-house POS</p>
+            <h1 id="viewTitle">Billing counter</h1>
+          </div>
+          <div class="topbar-actions">
+            <label class="global-search">
+              <span class="sr-only">Scan barcode or search products</span>
+              <input id="globalSearch" type="search" placeholder="Scan barcode or search SKU, product, customer">
+            </label>
+            <button class="button ghost" id="seedDataBtn" type="button">Load demo data</button>
+            <button class="button primary" id="exportBtn" type="button">Export data</button>
+          </div>
+        </header>
+
+        <section class="view active" id="billingView" aria-labelledby="billing-heading">
+          <div class="billing-grid">
+            <section class="panel product-picker">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Barcode billing</p>
+                  <h2 id="billing-heading">Scan or tap products</h2>
+                </div>
+                <button class="button subtle" id="clearCartBtn" type="button">Clear cart</button>
+              </div>
+              <div class="scan-box">
+                <input id="barcodeInput" autocomplete="off" placeholder="Ready for barcode scanner">
+                <button class="button camera" id="cameraScanBtn" type="button">Scan with camera</button>
+                <span>Use a USB scanner, type SKU/barcode, or scan with a phone camera.</span>
+              </div>
+              <div class="filter-row" id="categoryChips" aria-label="Product category filters"></div>
+              <div class="product-grid" id="productGrid"></div>
+            </section>
+
+            <aside class="panel cart-panel" aria-label="Current bill">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Current bill</p>
+                  <h2>Cart</h2>
+                </div>
+                <span class="pill" id="cartCount">0 items</span>
+              </div>
+              <div class="customer-card">
+                <label>
+                  Customer phone
+                  <input id="customerPhone" placeholder="Mobile number">
+                </label>
+                <label>
+                  Customer name
+                  <input id="customerName" placeholder="Walk-in customer">
+                </label>
+              </div>
+              <div class="cart-items" id="cartItems"></div>
+              <div class="totals">
+                <div><span>Subtotal</span><strong id="subtotalValue">₹0</strong></div>
+                <div><span>Discount</span><input id="discountInput" inputmode="decimal" value="0" aria-label="Discount amount"></div>
+                <div><span>Tax</span><strong id="taxValue">₹0</strong></div>
+                <div class="grand"><span>Total</span><strong id="totalValue">₹0</strong></div>
+              </div>
+              <div class="payment-row" role="group" aria-label="Payment mode">
+                <button class="pay-mode active" data-payment="Cash" type="button">Cash</button>
+                <button class="pay-mode" data-payment="UPI" type="button">UPI</button>
+                <button class="pay-mode" data-payment="Card" type="button">Card</button>
+              </div>
+              <button class="button checkout" id="checkoutBtn" type="button">Complete sale</button>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="productsView" aria-labelledby="products-heading">
+          <div class="split-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Catalog master</p>
+                  <h2 id="products-heading">Products and barcodes</h2>
+                </div>
+                <button class="button subtle" id="newProductBtn" type="button">New product</button>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>SKU</th><th>Product</th><th>Barcode</th><th>Price</th><th>Stock</th><th></th></tr>
+                  </thead>
+                  <tbody id="productTable"></tbody>
+                </table>
+              </div>
+            </section>
+            <form class="panel form-panel" id="productForm">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Product editor</p>
+                  <h2 id="productFormTitle">Add product</h2>
+                </div>
+              </div>
+              <input type="hidden" id="productId">
+              <label>Product name<input id="productName" required></label>
+              <label>SKU<input id="productSku" required></label>
+              <label>Barcode<input id="productBarcode" required></label>
+              <div class="form-row">
+                <label>Category<input id="productCategory" required></label>
+                <label>Brand<input id="productBrand"></label>
+              </div>
+              <div class="form-row">
+                <label>MRP<input id="productMrp" type="number" min="0" step="0.01" required></label>
+                <label>Selling price<input id="productPrice" type="number" min="0" step="0.01" required></label>
+              </div>
+              <div class="form-row">
+                <label>Opening stock<input id="productStock" type="number" min="0" step="1" required></label>
+                <label>Tax %<input id="productTax" type="number" min="0" step="0.01" value="18"></label>
+              </div>
+              <label>Image URL<input id="productImage" placeholder="Optional product image"></label>
+              <button class="button primary" type="submit">Save product</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="view" id="inventoryView" aria-labelledby="inventory-heading">
+          <div class="split-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Stock control</p>
+                  <h2 id="inventory-heading">Inventory ledger</h2>
+                </div>
+              </div>
+              <div class="kpi-grid">
+                <article><span>Total SKUs</span><strong id="skuKpi">0</strong></article>
+                <article><span>Units in stock</span><strong id="unitsKpi">0</strong></article>
+                <article><span>Low stock</span><strong id="lowKpi">0</strong></article>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Time</th><th>SKU</th><th>Type</th><th>Qty</th><th>Note</th></tr></thead>
+                  <tbody id="movementTable"></tbody>
+                </table>
+              </div>
+            </section>
+            <form class="panel form-panel" id="stockForm">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Adjust stock</p>
+                  <h2>Receive or correct stock</h2>
+                </div>
+              </div>
+              <label>Product<select id="stockProduct"></select></label>
+              <div class="form-row">
+                <label>Movement
+                  <select id="stockType">
+                    <option value="receive">Receive stock</option>
+                    <option value="adjust">Manual adjustment</option>
+                    <option value="damage">Damage/write-off</option>
+                  </select>
+                </label>
+                <label>Quantity<input id="stockQty" type="number" step="1" required></label>
+              </div>
+              <label>Note<input id="stockNote" placeholder="Supplier bill, audit reason, etc."></label>
+              <button class="button primary" type="submit">Post movement</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="view" id="ordersView" aria-labelledby="orders-heading">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Unified orders</p>
+                <h2 id="orders-heading">POS and online order history</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Order</th><th>Channel</th><th>Customer</th><th>Items</th><th>Total</th><th>Payment</th><th>Status</th></tr></thead>
+                <tbody id="ordersTable"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="view" id="syncView" aria-labelledby="sync-heading">
+          <div class="split-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Ecommerce channels</p>
+                  <h2 id="sync-heading">Connector-ready sync</h2>
+                </div>
+                <button class="button subtle" id="importChannelBtn" type="button">Import products</button>
+              </div>
+              <div class="connector-list" id="connectorList"></div>
+              <div class="table-wrap">
+                <table>
+                  <thead><tr><th>Time</th><th>Channel</th><th>Event</th><th>Status</th><th>Payload</th></tr></thead>
+                  <tbody id="syncTable"></tbody>
+                </table>
+              </div>
+            </section>
+            <form class="panel form-panel" id="connectorForm">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Channel settings</p>
+                  <h2>Add connector</h2>
+                </div>
+              </div>
+              <label>Channel type
+                <select id="connectorType">
+                  <option>WooCommerce</option>
+                  <option>Shopify</option>
+                  <option>Custom API</option>
+                  <option>SyncBot</option>
+                </select>
+              </label>
+              <label>Store name<input id="connectorName" placeholder="Store name"></label>
+              <label>Base URL / endpoint<input id="connectorUrl" placeholder="https://store.example.com"></label>
+              <label>API key / token<input id="connectorKey" placeholder="Server-side in production"></label>
+              <button class="button primary" type="submit">Save connector</button>
+            </form>
+          </div>
+        </section>
+
+        <section class="view" id="reportsView" aria-labelledby="reports-heading">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Store health</p>
+                <h2 id="reports-heading">Daily snapshot</h2>
+              </div>
+            </div>
+            <div class="report-grid">
+              <article><span>Today sales</span><strong id="salesKpi">₹0</strong></article>
+              <article><span>Average bill</span><strong id="aovKpi">₹0</strong></article>
+              <article><span>Orders</span><strong id="ordersKpi">0</strong></article>
+              <article><span>Queued sync jobs</span><strong id="queueKpi">0</strong></article>
+            </div>
+            <div class="insight-card" id="insightCard"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <div class="scanner-modal" id="scannerModal" aria-hidden="true">
+      <div class="scanner-card" role="dialog" aria-modal="true" aria-labelledby="scannerTitle">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Camera scanner</p>
+            <h2 id="scannerTitle">Scan product barcode</h2>
+          </div>
+          <button class="button subtle" id="closeScannerBtn" type="button">Close</button>
+        </div>
+        <div class="scanner-stage">
+          <video id="scannerVideo" playsinline muted></video>
+          <div class="scan-frame" aria-hidden="true"></div>
+        </div>
+        <p class="scanner-help" id="scannerHelp">Allow camera access, then place the barcode inside the frame.</p>
+        <div class="manual-scan">
+          <input id="manualScannerInput" placeholder="Manual barcode/SKU fallback">
+          <button class="button primary" id="manualScannerBtn" type="button">Add</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

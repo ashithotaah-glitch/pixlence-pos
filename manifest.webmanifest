@@ -1,0 +1,17 @@
+{
+  "name": "OmniPOS",
+  "short_name": "OmniPOS",
+  "description": "Offline-ready POS, billing, inventory, and ecommerce sync workspace.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#fff8ef",
+  "theme_color": "#184d3b",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
