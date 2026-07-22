@@ -7,6 +7,7 @@ Offline-ready POS, billing, inventory, and ecommerce sync foundation.
 - User login/signup gate for the first multi-tenant platform layer.
 - Supabase Auth adapter using hosted environment variables when configured.
 - Store workspaces so each user can create and switch between isolated stores.
+- Supabase cloud workspace sync for stores, memberships, and per-store POS state.
 - Browser-based POS billing screen with barcode scanner input.
 - Product catalog with SKU, barcode, brand, category, price, tax, image, and stock.
 - Inventory movements for receiving, adjustments, damage/write-off, and sales.
@@ -43,9 +44,8 @@ The current build has a Supabase-aware auth/workspace adapter:
 - The active store switcher changes the complete billing/inventory context.
 - Existing single-store local data is migrated into the first created store.
 - If `SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` are present, signup/login uses Supabase Auth.
-- If Supabase is unavailable, local prototype auth remains as a fallback.
-
-Store data still uses the local workspace adapter until the Supabase schema is applied and cloud sync is enabled.
+- If Supabase is available, stores and store state sync to `stores`, `store_members`, and `store_states`.
+- If Supabase is unavailable, local prototype auth and local cache remain as fallback.
 
 ## Environment variables
 
@@ -65,13 +65,13 @@ LPS_WC_CONSUMER_SECRET=...
 
 ## Supabase schema
 
-Run `/supabase/schema.sql` in the Supabase SQL Editor before enabling cloud store-state sync.
+Run `/supabase/schema.sql` in the Supabase SQL Editor before using cloud store-state sync.
 
 ## Next backend phase
 
 The frontend is intentionally connector-ready. The next phase should add:
 
-- Cloud persistence for stores and POS state using the tables in `/supabase/schema.sql`.
+- Structured product, inventory, customer, and sale tables instead of JSON store state.
 - API backend with role-based access control and sync conflict handling.
 - WooCommerce REST connector.
 - Webhook listener for online orders.

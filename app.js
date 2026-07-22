@@ -107,6 +107,7 @@ let zxingControls = null;
 let lastScannedCode = "";
 let supabaseClient = null;
 let authProvider = "local";
+let cloudSaveTimer = null;
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -188,6 +189,7 @@ function saveState() {
     store.updatedAt = new Date().toISOString();
   }
   savePlatform();
+  queueCloudStateSave();
   updateConnection();
 }
 
@@ -197,6 +199,10 @@ function passwordToken(value) {
 
 function displayUserName(user) {
   return user?.name || user?.email?.split("@")[0] || "Store owner";
+}
+
+function isCloudAuth() {
+  return authProvider === "supabase" && Boolean(supabaseClient);
 }
 
 function ensurePlatformUserFromSupabase(supabaseUser) {
@@ -232,7 +238,7 @@ async function initializeSupabaseAuth() {
     supabaseClient = window.supabase.createClient(config.supabase.url, config.supabase.publishableKey);
     authProvider = "supabase";
     $("#authNote").textContent = config.supabase.secretConfigured
-      ? "Secure Supabase login is active. Store data is isolated per account; cloud database sync is the next schema step."
+      ? "Secure Supabase login and cloud store sync are active. Local cache stays available for offline work."
       : "Secure Supabase login is active. Add the server secret key for backend sync jobs.";
     const { data } = await supabaseClient.auth.getSession();
     return data.session || null;
@@ -241,6 +247,160 @@ async function initializeSupabaseAuth() {
     $("#authNote").textContent = "Cloud login could not be reached. Local prototype login is active on this device.";
     return null;
   }
+}
+
+async function loadCloudWorkspace(user) {
+  if (!supabaseClient || !user?.id) return;
+  const { data: memberships, error: membershipError } = await supabaseClient
+    .from("store_members")
+    .select("id, store_id, user_id, role, created_at")
+    .eq("user_id", user.id);
+  if (membershipError) {
+    toast(`Cloud workspace load failed: ${membershipError.message}`);
+    return;
+  }
+
+  const storeIds = (memberships || []).map((membership) => membership.store_id);
+  const [storesResult, statesResult] = storeIds.length
+    ? await Promise.all([
+        supabaseClient.from("stores").select("*").in("id", storeIds),
+        supabaseClient.from("store_states").select("*").in("store_id", storeIds)
+      ])
+    : [{ data: [], error: null }, { data: [], error: null }];
+
+  if (storesResult.error || statesResult.error) {
+    toast(`Cloud workspace load failed: ${(storesResult.error || statesResult.error).message}`);
+    return;
+  }
+
+  const existingOtherStores = platform.stores.filter((store) =>
+    !platform.memberships.some((membership) => membership.userId === user.id && membership.storeId === store.id)
+  );
+  const stateByStore = new Map((statesResult.data || []).map((entry) => [entry.store_id, entry.data]));
+  platform.stores = [
+    ...existingOtherStores,
+    ...(storesResult.data || []).map((store) => ({
+      id: store.id,
+      name: store.name,
+      slug: store.slug,
+      type: store.type || "General retail",
+      website: store.website || "",
+      createdAt: store.created_at,
+      updatedAt: store.updated_at,
+      data: normalizeStoreState(stateByStore.get(store.id))
+    }))
+  ];
+  platform.memberships = [
+    ...platform.memberships.filter((membership) => membership.userId !== user.id),
+    ...(memberships || []).map((membership) => ({
+      id: membership.id,
+      userId: membership.user_id,
+      storeId: membership.store_id,
+      role: membership.role,
+      createdAt: membership.created_at
+    }))
+  ];
+  savePlatform();
+}
+
+function normalizeStoreState(value) {
+  return {
+    ...defaultState(),
+    ...(value && typeof value === "object" ? value : {}),
+    products: Array.isArray(value?.products) ? value.products : [],
+    orders: Array.isArray(value?.orders) ? value.orders : [],
+    movements: Array.isArray(value?.movements) ? value.movements : [],
+    connectors: Array.isArray(value?.connectors) ? value.connectors : defaultState().connectors,
+    syncQueue: Array.isArray(value?.syncQueue) ? value.syncQueue : []
+  };
+}
+
+async function createCloudStore({ name, type = "General retail", website = "", ownerId, useLegacy = false }) {
+  const cleanName = name.trim();
+  const initialState = useLegacy ? migrateLegacyState() : defaultState();
+  const storeId = crypto.randomUUID();
+  const membershipId = crypto.randomUUID();
+  const now = new Date().toISOString();
+  const storePayload = {
+    id: storeId,
+    owner_id: ownerId,
+    name: cleanName,
+    slug: slugify(cleanName),
+    type,
+    website
+  };
+  const { error: storeError } = await supabaseClient
+    .from("stores")
+    .insert(storePayload);
+  if (storeError) throw storeError;
+
+  const membershipPayload = {
+    id: membershipId,
+    store_id: storeId,
+    user_id: ownerId,
+    role: "Owner"
+  };
+  const { error: membershipError } = await supabaseClient
+    .from("store_members")
+    .insert(membershipPayload);
+  if (membershipError) throw membershipError;
+
+  const { error: stateError } = await supabaseClient
+    .from("store_states")
+    .insert({
+      store_id: storeId,
+      data: initialState
+    });
+  if (stateError) throw stateError;
+
+  const localStore = {
+    id: storeId,
+    name: cleanName,
+    slug: storePayload.slug,
+    type: type || "General retail",
+    website: website || "",
+    createdAt: now,
+    updatedAt: now,
+    data: initialState
+  };
+  platform.stores.push(localStore);
+  platform.memberships.push({
+    id: membershipId,
+    userId: ownerId,
+    storeId,
+    role: "Owner",
+    createdAt: now
+  });
+  savePlatform();
+  return localStore;
+}
+
+function queueCloudStateSave() {
+  if (!isCloudAuth() || !currentStore()) return;
+  window.clearTimeout(cloudSaveTimer);
+  cloudSaveTimer = window.setTimeout(() => {
+    saveCloudState().catch((error) => {
+      enqueueSync("Supabase", "store.state.sync.failed", {
+        store_id: platform.session.storeId,
+        message: error.message
+      });
+      savePlatform();
+      updateConnection();
+    });
+  }, 600);
+}
+
+async function saveCloudState() {
+  const store = currentStore();
+  if (!isCloudAuth() || !store) return;
+  const { error } = await supabaseClient
+    .from("store_states")
+    .upsert({
+      store_id: store.id,
+      data: state,
+      updated_at: new Date().toISOString()
+    });
+  if (error) throw error;
 }
 
 function slugify(value) {
@@ -813,16 +973,17 @@ function saveConnector(event) {
   toast("Connector saved");
 }
 
-function finishAuthenticatedSession(user, preferredStoreName = "") {
+async function finishAuthenticatedSession(user, preferredStoreName = "") {
   const stores = userStores(user.id);
   let store = stores[0];
   if (!store) {
-    store = createStore({
+    const storeInput = {
       name: preferredStoreName || `${displayUserName(user)}'s Store`,
       type: "Pet store",
       ownerId: user.id,
       useLegacy: platform.stores.length === 0
-    });
+    };
+    store = isCloudAuth() ? await createCloudStore(storeInput) : createStore(storeInput);
   }
   platform.session = { userId: user.id, storeId: store.id };
   state = getActiveStoreState();
@@ -861,7 +1022,8 @@ async function signup(event) {
       return;
     }
     const user = ensurePlatformUserFromSupabase(data.user);
-    finishAuthenticatedSession(user, storeName);
+    await loadCloudWorkspace(user);
+    await finishAuthenticatedSession(user, storeName);
     toast(`Welcome, ${displayUserName(user)}. ${currentStore().name} is ready.`);
     return;
   }
@@ -885,7 +1047,7 @@ async function signup(event) {
     ownerId: user.id,
     useLegacy: platform.stores.length === 0
   });
-  finishAuthenticatedSession(user, store.name);
+  await finishAuthenticatedSession(user, store.name);
   toast(`Welcome, ${user.name}. ${store.name} is ready.`);
 }
 
@@ -900,7 +1062,8 @@ async function login(event) {
       return;
     }
     const user = ensurePlatformUserFromSupabase(data.user);
-    finishAuthenticatedSession(user);
+    await loadCloudWorkspace(user);
+    await finishAuthenticatedSession(user);
     toast(`Logged in to ${currentStore().name}`);
     return;
   }
@@ -914,7 +1077,7 @@ async function login(event) {
     const store = createStore({ name: `${user.name}'s Store`, ownerId: user.id });
     stores.push(store);
   }
-  finishAuthenticatedSession(user);
+  await finishAuthenticatedSession(user);
   toast(`Logged in to ${currentStore().name}`);
 }
 
@@ -929,16 +1092,17 @@ async function logout() {
   toast("Logged out");
 }
 
-function createStoreFromForm(event) {
+async function createStoreFromForm(event) {
   event.preventDefault();
   const user = currentUser();
   if (!user) return;
-  const store = createStore({
+  const storeInput = {
     name: $("#storeName").value.trim(),
     type: $("#storeType").value,
     website: $("#storeWebsite").value.trim(),
     ownerId: user.id
-  });
+  };
+  const store = isCloudAuth() ? await createCloudStore(storeInput) : createStore(storeInput);
   event.target.reset();
   platform.session.storeId = store.id;
   state = getActiveStoreState();
@@ -1324,7 +1488,8 @@ async function boot() {
   const session = await initializeSupabaseAuth();
   if (session?.user) {
     const user = ensurePlatformUserFromSupabase(session.user);
-    finishAuthenticatedSession(user);
+    await loadCloudWorkspace(user);
+    await finishAuthenticatedSession(user);
     registerServiceWorker();
     return;
   }
