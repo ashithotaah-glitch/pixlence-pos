@@ -221,8 +221,27 @@ function addScannedCode(code) {
     toast(`Added ${product.name}`);
     return true;
   }
-  toast(`No product found for ${code}`);
+  prepareUnknownBarcode(code);
   return false;
+}
+
+function prepareUnknownBarcode(code) {
+  const normalized = String(code || "").trim();
+  if (!normalized) {
+    toast("No barcode detected");
+    return;
+  }
+  toast(`Barcode ${normalized} is not in catalog. Add product details.`);
+  closeCameraScanner();
+  setView("products");
+  $("#productForm").reset();
+  $("#productId").value = "";
+  $("#productSku").value = normalized;
+  $("#productBarcode").value = normalized;
+  $("#productCategory").value = "Uncategorized";
+  $("#productTax").value = "18";
+  $("#productFormTitle").textContent = "Add scanned product";
+  $("#productName").focus();
 }
 
 async function openCameraScanner() {
