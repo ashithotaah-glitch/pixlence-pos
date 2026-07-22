@@ -100,6 +100,8 @@ let activeSearch = "";
 let cart = [];
 let scannerStream = null;
 let scannerTimer = null;
+let zxingReader = null;
+let zxingControls = null;
 let lastScannedCode = "";
 
 const $ = (selector) => document.querySelector(selector);
@@ -228,14 +230,11 @@ async function openCameraScanner() {
   const help = $("#scannerHelp");
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
-  $("#manualScannerInput").focus();
+  help.textContent = "Requesting camera access...";
 
   if (!("mediaDevices" in navigator) || !navigator.mediaDevices.getUserMedia) {
     help.textContent = "Camera access is not available in this browser. Use manual barcode/SKU entry.";
-    return;
-  }
-  if (!("BarcodeDetector" in window)) {
-    help.textContent = "This browser does not support camera barcode detection yet. Use manual barcode/SKU entry or a USB scanner.";
+    $("#manualScannerInput").focus();
     return;
   }
 
@@ -247,28 +246,60 @@ async function openCameraScanner() {
     const video = $("#scannerVideo");
     video.srcObject = scannerStream;
     await video.play();
-    const detector = new BarcodeDetector({
-      formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "itf", "qr_code"]
-    });
-    help.textContent = "Scanning. Hold the barcode steady inside the frame.";
-    scannerTimer = window.setInterval(async () => {
-      if (!video.videoWidth) return;
-      try {
-        const codes = await detector.detect(video);
-        if (!codes.length) return;
-        const value = codes[0].rawValue;
-        if (!value || value === lastScannedCode) return;
-        lastScannedCode = value;
-        help.textContent = `Detected ${value}`;
-        if (addScannedCode(value)) {
-          closeCameraScanner();
+    help.textContent = "Camera is open. Hold the barcode steady inside the frame.";
+
+    if ("BarcodeDetector" in window) {
+      const detector = new BarcodeDetector({
+        formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "code_39", "itf", "qr_code"]
+      });
+      scannerTimer = window.setInterval(async () => {
+        if (!video.videoWidth) return;
+        try {
+          const codes = await detector.detect(video);
+          if (!codes.length) return;
+          handleDetectedCode(codes[0].rawValue);
+        } catch (error) {
+          help.textContent = "Camera is open. Try holding the barcode closer or use manual entry.";
         }
-      } catch (error) {
-        help.textContent = "Camera scanning paused. Try manual entry if the barcode is not detected.";
+      }, 450);
+      return;
+    }
+
+    if (window.ZXing && window.ZXing.BrowserMultiFormatReader) {
+      help.textContent = "Camera is open. Using compatibility scanner for this browser.";
+      if (scannerStream) {
+        scannerStream.getTracks().forEach((track) => track.stop());
+        scannerStream = null;
+        video.srcObject = null;
       }
-    }, 450);
+      zxingReader = new window.ZXing.BrowserMultiFormatReader();
+      const result = zxingReader.decodeFromVideoDevice(null, video, (scanResult) => {
+        if (scanResult && scanResult.text) {
+          handleDetectedCode(scanResult.text);
+        }
+      });
+      if (result && typeof result.then === "function") {
+        result.catch(() => {
+          help.textContent = "Camera is open, but barcode scanning could not start. Use manual entry.";
+        });
+      }
+      return;
+    }
+
+    help.textContent = "Camera is open, but this browser needs manual barcode/SKU entry.";
   } catch (error) {
     help.textContent = "Camera permission was blocked or unavailable. Use manual barcode/SKU entry.";
+    $("#manualScannerInput").focus();
+  }
+}
+
+function handleDetectedCode(value) {
+  const code = String(value || "").trim();
+  if (!code || code === lastScannedCode) return;
+  lastScannedCode = code;
+  $("#scannerHelp").textContent = `Detected ${code}`;
+  if (addScannedCode(code)) {
+    closeCameraScanner();
   }
 }
 
@@ -276,6 +307,14 @@ function closeCameraScanner() {
   if (scannerTimer) {
     window.clearInterval(scannerTimer);
     scannerTimer = null;
+  }
+  if (zxingControls && typeof zxingControls.stop === "function") {
+    zxingControls.stop();
+    zxingControls = null;
+  }
+  if (zxingReader && typeof zxingReader.reset === "function") {
+    zxingReader.reset();
+    zxingReader = null;
   }
   if (scannerStream) {
     scannerStream.getTracks().forEach((track) => track.stop());
