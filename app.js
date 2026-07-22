@@ -1,4 +1,5 @@
-const STORAGE_KEY = "omni-pos-state-v1";
+const PLATFORM_KEY = "omni-pos-platform-v1";
+const LEGACY_STORAGE_KEY = "omni-pos-state-v1";
 
 const money = new Intl.NumberFormat("en-IN", {
   style: "currency",
@@ -93,7 +94,8 @@ const demoProducts = [
   }
 ];
 
-let state = loadState();
+let platform = loadPlatform();
+let state = getActiveStoreState();
 let activeCategory = "All";
 let activePayment = "Cash";
 let activeSearch = "";
@@ -125,18 +127,145 @@ function defaultState() {
   };
 }
 
-function loadState() {
+function emptyPlatform() {
+  return {
+    users: [],
+    stores: [],
+    memberships: [],
+    session: {
+      userId: null,
+      storeId: null
+    }
+  };
+}
+
+function loadPlatform() {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return saved || defaultState();
+    const saved = JSON.parse(localStorage.getItem(PLATFORM_KEY));
+    return saved || emptyPlatform();
+  } catch {
+    return emptyPlatform();
+  }
+}
+
+function savePlatform() {
+  localStorage.setItem(PLATFORM_KEY, JSON.stringify(platform));
+}
+
+function currentUser() {
+  return platform.users.find((user) => user.id === platform.session.userId) || null;
+}
+
+function currentStore() {
+  return platform.stores.find((store) => store.id === platform.session.storeId) || null;
+}
+
+function userStores(userId = platform.session.userId) {
+  const storeIds = platform.memberships
+    .filter((membership) => membership.userId === userId)
+    .map((membership) => membership.storeId);
+  return platform.stores.filter((store) => storeIds.includes(store.id));
+}
+
+function getActiveStoreState() {
+  const store = currentStore();
+  if (!store) return defaultState();
+  if (!store.data) store.data = defaultState();
+  store.data.products ||= [];
+  store.data.orders ||= [];
+  store.data.movements ||= [];
+  store.data.connectors ||= [];
+  store.data.syncQueue ||= [];
+  return store.data;
+}
+
+function saveState() {
+  const store = currentStore();
+  if (store) {
+    store.data = state;
+    store.updatedAt = new Date().toISOString();
+  }
+  savePlatform();
+  updateConnection();
+}
+
+function passwordToken(value) {
+  return btoa(unescape(encodeURIComponent(String(value || ""))));
+}
+
+function slugify(value) {
+  return String(value || "store").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "") || "store";
+}
+
+function migrateLegacyState() {
+  try {
+    const legacy = JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY));
+    if (!legacy || !Array.isArray(legacy.products)) return defaultState();
+    return {
+      ...defaultState(),
+      ...legacy,
+      products: legacy.products || [],
+      orders: legacy.orders || [],
+      movements: legacy.movements || [],
+      connectors: legacy.connectors || [],
+      syncQueue: legacy.syncQueue || []
+    };
   } catch {
     return defaultState();
   }
 }
 
-function saveState() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  updateConnection();
+function createStore({ name, type = "General retail", website = "", ownerId, useLegacy = false }) {
+  const cleanName = name.trim();
+  const store = {
+    id: crypto.randomUUID(),
+    name: cleanName,
+    slug: slugify(cleanName),
+    type,
+    website,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    data: useLegacy ? migrateLegacyState() : defaultState()
+  };
+  platform.stores.push(store);
+  platform.memberships.push({
+    id: crypto.randomUUID(),
+    userId: ownerId,
+    storeId: store.id,
+    role: "Owner",
+    createdAt: new Date().toISOString()
+  });
+  return store;
+}
+
+function setActiveStore(storeId) {
+  const allowed = userStores().some((store) => store.id === storeId);
+  if (!allowed) return;
+  platform.session.storeId = storeId;
+  state = getActiveStoreState();
+  activeCategory = "All";
+  activeSearch = "";
+  cart = [];
+  savePlatform();
+  renderShell();
+  renderAll();
+}
+
+function showAuth(mode = "login") {
+  $("#authScreen").classList.add("active");
+  $(".app-shell").classList.add("locked");
+  setAuthMode(mode);
+}
+
+function hideAuth() {
+  $("#authScreen").classList.remove("active");
+  $(".app-shell").classList.remove("locked");
+}
+
+function setAuthMode(mode) {
+  $$(".auth-tab").forEach((button) => button.classList.toggle("active", button.dataset.authMode === mode));
+  $("#loginForm").classList.toggle("active", mode === "login");
+  $("#signupForm").classList.toggle("active", mode === "signup");
 }
 
 function toast(message) {
@@ -148,6 +277,7 @@ function toast(message) {
 }
 
 function updateConnection() {
+  if (!$("#connectionLabel") || !state) return;
   $("#connectionLabel").textContent = navigator.onLine ? "Online" : "Offline ready";
   $("#syncLabel").textContent = `${state.syncQueue.filter((job) => job.status === "Queued").length} sync jobs queued`;
 }
@@ -162,10 +292,21 @@ function setView(view) {
     inventory: "Inventory management",
     orders: "Order history",
     sync: "Sales channels",
-    reports: "Reports"
+    reports: "Reports",
+    stores: "Store workspaces"
   };
   $("#viewTitle").textContent = titles[view];
   renderAll();
+}
+
+function renderShell() {
+  const user = currentUser();
+  const store = currentStore();
+  if (!user || !store) return;
+  $("#userLabel").textContent = `${user.name} · Owner`;
+  $("#storeSwitcher").innerHTML = userStores().map((item) => (
+    `<option value="${item.id}" ${item.id === store.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`
+  )).join("");
 }
 
 function productInitials(product) {
@@ -622,6 +763,95 @@ function saveConnector(event) {
   toast("Connector saved");
 }
 
+function signup(event) {
+  event.preventDefault();
+  const name = $("#signupName").value.trim();
+  const email = $("#signupEmail").value.trim().toLowerCase();
+  const password = $("#signupPassword").value;
+  const storeName = $("#signupStore").value.trim();
+  if (!name || !email || !password || !storeName) {
+    toast("Enter your account and store details");
+    return;
+  }
+  if (platform.users.some((user) => user.email === email)) {
+    toast("Account already exists. Login instead.");
+    setAuthMode("login");
+    $("#loginEmail").value = email;
+    return;
+  }
+  const user = {
+    id: crypto.randomUUID(),
+    name,
+    email,
+    password: passwordToken(password),
+    createdAt: new Date().toISOString()
+  };
+  platform.users.push(user);
+  const store = createStore({
+    name: storeName,
+    type: "Pet store",
+    ownerId: user.id,
+    useLegacy: platform.stores.length === 0
+  });
+  platform.session = { userId: user.id, storeId: store.id };
+  state = getActiveStoreState();
+  savePlatform();
+  hideAuth();
+  renderShell();
+  setView("billing");
+  toast(`Welcome, ${user.name}. ${store.name} is ready.`);
+}
+
+function login(event) {
+  event.preventDefault();
+  const email = $("#loginEmail").value.trim().toLowerCase();
+  const password = $("#loginPassword").value;
+  const user = platform.users.find((item) => item.email === email && item.password === passwordToken(password));
+  if (!user) {
+    toast("Login failed. Check email and password.");
+    return;
+  }
+  const stores = userStores(user.id);
+  if (!stores.length) {
+    const store = createStore({ name: `${user.name}'s Store`, ownerId: user.id });
+    stores.push(store);
+  }
+  platform.session = { userId: user.id, storeId: stores[0].id };
+  state = getActiveStoreState();
+  savePlatform();
+  hideAuth();
+  renderShell();
+  setView("billing");
+  toast(`Logged in to ${currentStore().name}`);
+}
+
+function logout() {
+  platform.session = { userId: null, storeId: null };
+  savePlatform();
+  cart = [];
+  showAuth("login");
+  toast("Logged out");
+}
+
+function createStoreFromForm(event) {
+  event.preventDefault();
+  const user = currentUser();
+  if (!user) return;
+  const store = createStore({
+    name: $("#storeName").value.trim(),
+    type: $("#storeType").value,
+    website: $("#storeWebsite").value.trim(),
+    ownerId: user.id
+  });
+  event.target.reset();
+  platform.session.storeId = store.id;
+  state = getActiveStoreState();
+  savePlatform();
+  renderShell();
+  renderAll();
+  toast(`${store.name} created`);
+}
+
 async function importChannelProducts() {
   const connector = state.connectors.find((item) => item.type === "WooCommerce") || state.connectors[0];
   if (!connector) {
@@ -840,7 +1070,37 @@ function renderReports() {
     : `<strong>Inventory looks healthy.</strong><p>No low-stock products in the current catalog.</p>`;
 }
 
+function renderStores() {
+  const stores = userStores();
+  $("#storeGrid").innerHTML = stores.map((store) => {
+    const membership = platform.memberships.find((item) => item.storeId === store.id && item.userId === platform.session.userId);
+    const productCount = store.data?.products?.length || 0;
+    const orderCount = store.data?.orders?.length || 0;
+    const connectorCount = store.data?.connectors?.length || 0;
+    return `
+      <article class="store-card ${store.id === platform.session.storeId ? "active" : ""}">
+        <div>
+          <span class="store-icon">${escapeHtml(store.name.slice(0, 2).toUpperCase())}</span>
+          <div>
+            <strong>${escapeHtml(store.name)}</strong>
+            <small>${escapeHtml(store.type || "Retail")} · ${escapeHtml(membership?.role || "Member")}</small>
+          </div>
+        </div>
+        <dl>
+          <div><dt>Products</dt><dd>${productCount}</dd></div>
+          <div><dt>Orders</dt><dd>${orderCount}</dd></div>
+          <div><dt>Connectors</dt><dd>${connectorCount}</dd></div>
+        </dl>
+        <small>${escapeHtml(store.website || "Website not connected yet")}</small>
+        <button class="button subtle" data-store="${store.id}" type="button">${store.id === platform.session.storeId ? "Active store" : "Switch store"}</button>
+      </article>
+    `;
+  }).join("");
+}
+
 function renderAll() {
+  if (!currentUser() || !currentStore()) return;
+  renderShell();
   renderCategories();
   renderProducts();
   renderCart();
@@ -849,6 +1109,7 @@ function renderAll() {
   renderOrders();
   renderConnectors();
   renderReports();
+  renderStores();
   updateConnection();
 }
 
@@ -878,6 +1139,12 @@ function bindEvents() {
     const node = $(selector);
     if (node) node.addEventListener(eventName, handler);
   };
+  $$(".auth-tab").forEach((button) => button.addEventListener("click", () => setAuthMode(button.dataset.authMode)));
+  on("#loginForm", "submit", login);
+  on("#signupForm", "submit", signup);
+  on("#logoutBtn", "click", logout);
+  on("#storeSwitcher", "change", (event) => setActiveStore(event.target.value));
+  on("#storeForm", "submit", createStoreFromForm);
   $$(".nav-item").forEach((button) => button.addEventListener("click", () => setView(button.dataset.view)));
   on("#seedDataBtn", "click", seedData);
   on("#exportBtn", "click", exportData);
@@ -940,6 +1207,8 @@ function bindEvents() {
       activePayment = pay.dataset.payment;
       $$(".pay-mode").forEach((button) => button.classList.toggle("active", button === pay));
     }
+    const storeButton = event.target.closest("[data-store]");
+    if (storeButton) setActiveStore(storeButton.dataset.store);
   });
   window.addEventListener("online", updateConnection);
   window.addEventListener("offline", updateConnection);
@@ -954,6 +1223,17 @@ async function registerServiceWorker() {
   }
 }
 
-bindEvents();
-renderAll();
-registerServiceWorker();
+function boot() {
+  bindEvents();
+  if (!currentUser() || !currentStore()) {
+    showAuth(platform.users.length ? "login" : "signup");
+  } else {
+    hideAuth();
+    state = getActiveStoreState();
+    renderShell();
+    renderAll();
+  }
+  registerServiceWorker();
+}
+
+boot();

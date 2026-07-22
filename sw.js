@@ -1,4 +1,4 @@
-const CACHE_NAME = "omni-pos-v5";
+const CACHE_NAME = "omni-pos-v6";
 const APP_SHELL = [
   "./",
   "./index.html",

@@ -4,10 +4,12 @@ Offline-ready POS, billing, inventory, and ecommerce sync foundation.
 
 ## What is included
 
+- User login/signup gate for the first multi-tenant platform layer.
+- Store workspaces so each user can create and switch between isolated stores.
 - Browser-based POS billing screen with barcode scanner input.
 - Product catalog with SKU, barcode, brand, category, price, tax, image, and stock.
 - Inventory movements for receiving, adjustments, damage/write-off, and sales.
-- Offline local persistence using `localStorage` for the first prototype.
+- Offline local persistence using per-store `localStorage` workspaces for the first prototype.
 - PWA shell with service worker cache for offline loading.
 - Connector settings for WooCommerce, Shopify, Custom API, and SyncBot.
 - Sync queue logs for future API integration.
@@ -31,12 +33,24 @@ Target domain: `https://pos.pixlencelabs.com`
 
 The hosted app should use a backend API so ecommerce credentials are never exposed in browser JavaScript.
 
+## Multi-store platform layer
+
+The current build has a local auth/workspace adapter:
+
+- Each account can create one or more stores.
+- Every store has isolated POS data: products, stock movements, orders, connectors, and sync logs.
+- The active store switcher changes the complete billing/inventory context.
+- Existing single-store local data is migrated into the first created store.
+
+This is intentionally adapter-shaped so the next phase can replace local auth/storage with Supabase Auth + Postgres while keeping the POS UI behavior.
+
 ## Next backend phase
 
 The frontend is intentionally connector-ready. The next phase should add:
 
-- API backend with auth and user roles.
-- PostgreSQL/MySQL product, inventory, order, customer, and sync tables.
+- Supabase Auth or equivalent managed auth.
+- PostgreSQL store, membership, product, inventory, order, customer, and sync tables.
+- API backend with role-based access control.
 - WooCommerce REST connector.
 - Webhook listener for online orders.
 - Background queue for retries.

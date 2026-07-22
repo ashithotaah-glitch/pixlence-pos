@@ -10,6 +10,47 @@
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
+    <section class="auth-screen" id="authScreen" aria-labelledby="authTitle">
+      <div class="auth-brand">
+        <span class="brand-mark">OP</span>
+        <div>
+          <strong>OmniPOS</strong>
+          <small>Multi-store POS platform</small>
+        </div>
+      </div>
+      <div class="auth-layout">
+        <article class="auth-copy">
+          <p class="eyebrow">Store workspace</p>
+          <h1 id="authTitle">Run billing, inventory, and ecommerce sync for every store.</h1>
+          <p>Sign in to open your store workspace. Each user can create separate stores with isolated products, sales, inventory, customers, and website connectors.</p>
+          <div class="auth-trust">
+            <span>Offline billing</span>
+            <span>Barcode ready</span>
+            <span>WooCommerce ready</span>
+          </div>
+        </article>
+        <div class="auth-card">
+          <div class="auth-tabs" role="tablist" aria-label="Authentication">
+            <button class="auth-tab active" data-auth-mode="login" type="button">Login</button>
+            <button class="auth-tab" data-auth-mode="signup" type="button">Create account</button>
+          </div>
+          <form id="loginForm" class="auth-form active">
+            <label>Email<input id="loginEmail" type="email" autocomplete="email" required></label>
+            <label>Password<input id="loginPassword" type="password" autocomplete="current-password" required></label>
+            <button class="button primary" type="submit">Login to POS</button>
+          </form>
+          <form id="signupForm" class="auth-form">
+            <label>Your name<input id="signupName" autocomplete="name" required></label>
+            <label>Email<input id="signupEmail" type="email" autocomplete="email" required></label>
+            <label>Password<input id="signupPassword" type="password" autocomplete="new-password" minlength="6" required></label>
+            <label>First store name<input id="signupStore" placeholder="Lucky Pet Shop" required></label>
+            <button class="button primary" type="submit">Create workspace</button>
+          </form>
+          <p class="auth-note">Prototype login is stored locally for this first platform build. Next phase can replace this adapter with Supabase Auth.</p>
+        </div>
+      </div>
+    </section>
+
     <div class="app-shell">
       <aside class="sidebar" aria-label="Main navigation">
         <div class="brand">
@@ -19,6 +60,13 @@
             <small>Retail + ecommerce sync</small>
           </div>
         </div>
+        <div class="workspace-card">
+          <label>
+            Active store
+            <select id="storeSwitcher" aria-label="Switch active store"></select>
+          </label>
+          <small id="userLabel">Signed in</small>
+        </div>
         <nav class="nav" aria-label="POS sections">
           <button class="nav-item active" data-view="billing" type="button">Billing</button>
           <button class="nav-item" data-view="products" type="button">Products</button>
@@ -26,6 +74,7 @@
           <button class="nav-item" data-view="orders" type="button">Orders</button>
           <button class="nav-item" data-view="sync" type="button">Channels</button>
           <button class="nav-item" data-view="reports" type="button">Reports</button>
+          <button class="nav-item" data-view="stores" type="button">Stores</button>
         </nav>
         <div class="sidebar-card">
           <span class="status-dot"></span>
@@ -49,6 +98,7 @@
             </label>
             <button class="button ghost" id="seedDataBtn" type="button">Load demo data</button>
             <button class="button primary" id="exportBtn" type="button">Export data</button>
+            <button class="button ghost" id="logoutBtn" type="button">Logout</button>
           </div>
         </header>
 
@@ -281,6 +331,41 @@
             </div>
             <div class="insight-card" id="insightCard"></div>
           </section>
+        </section>
+
+        <section class="view" id="storesView" aria-labelledby="stores-heading">
+          <div class="split-grid">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Workspace admin</p>
+                  <h2 id="stores-heading">Your stores</h2>
+                </div>
+              </div>
+              <div class="store-grid" id="storeGrid"></div>
+            </section>
+            <form class="panel form-panel" id="storeForm">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">New workspace</p>
+                  <h2>Create another store</h2>
+                </div>
+              </div>
+              <label>Store name<input id="storeName" placeholder="Store name" required></label>
+              <label>Business type
+                <select id="storeType">
+                  <option>Pet store</option>
+                  <option>Grocery</option>
+                  <option>Pharmacy</option>
+                  <option>Fashion</option>
+                  <option>General retail</option>
+                </select>
+              </label>
+              <label>Website URL<input id="storeWebsite" placeholder="https://store.example.com"></label>
+              <button class="button primary" type="submit">Create store</button>
+              <p class="form-note">Each store keeps its own catalog, stock ledger, bills, connectors, and reports.</p>
+            </form>
+          </div>
         </section>
       </main>
     </div>
