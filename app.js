@@ -105,6 +105,8 @@ let scannerTimer = null;
 let zxingReader = null;
 let zxingControls = null;
 let lastScannedCode = "";
+let supabaseClient = null;
+let authProvider = "local";
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
@@ -191,6 +193,54 @@ function saveState() {
 
 function passwordToken(value) {
   return btoa(unescape(encodeURIComponent(String(value || ""))));
+}
+
+function displayUserName(user) {
+  return user?.name || user?.email?.split("@")[0] || "Store owner";
+}
+
+function ensurePlatformUserFromSupabase(supabaseUser) {
+  const id = supabaseUser.id;
+  let user = platform.users.find((item) => item.id === id);
+  if (!user) {
+    user = {
+      id,
+      name: supabaseUser.user_metadata?.full_name || supabaseUser.email?.split("@")[0] || "Store owner",
+      email: supabaseUser.email,
+      password: "",
+      authProvider: "supabase",
+      createdAt: new Date().toISOString()
+    };
+    platform.users.push(user);
+  } else {
+    user.name = user.name || supabaseUser.user_metadata?.full_name || supabaseUser.email?.split("@")[0];
+    user.email = supabaseUser.email || user.email;
+    user.authProvider = "supabase";
+  }
+  return user;
+}
+
+async function initializeSupabaseAuth() {
+  try {
+    const response = await fetch("/api/config", { credentials: "same-origin" });
+    const config = await response.json();
+    if (!config.supabase?.configured || !window.supabase?.createClient) {
+      authProvider = "local";
+      $("#authNote").textContent = "Secure cloud login is not configured yet. Local prototype login is active on this device.";
+      return null;
+    }
+    supabaseClient = window.supabase.createClient(config.supabase.url, config.supabase.publishableKey);
+    authProvider = "supabase";
+    $("#authNote").textContent = config.supabase.secretConfigured
+      ? "Secure Supabase login is active. Store data is isolated per account; cloud database sync is the next schema step."
+      : "Secure Supabase login is active. Add the server secret key for backend sync jobs.";
+    const { data } = await supabaseClient.auth.getSession();
+    return data.session || null;
+  } catch (error) {
+    authProvider = "local";
+    $("#authNote").textContent = "Cloud login could not be reached. Local prototype login is active on this device.";
+    return null;
+  }
 }
 
 function slugify(value) {
@@ -763,7 +813,26 @@ function saveConnector(event) {
   toast("Connector saved");
 }
 
-function signup(event) {
+function finishAuthenticatedSession(user, preferredStoreName = "") {
+  const stores = userStores(user.id);
+  let store = stores[0];
+  if (!store) {
+    store = createStore({
+      name: preferredStoreName || `${displayUserName(user)}'s Store`,
+      type: "Pet store",
+      ownerId: user.id,
+      useLegacy: platform.stores.length === 0
+    });
+  }
+  platform.session = { userId: user.id, storeId: store.id };
+  state = getActiveStoreState();
+  savePlatform();
+  hideAuth();
+  renderShell();
+  setView("billing");
+}
+
+async function signup(event) {
   event.preventDefault();
   const name = $("#signupName").value.trim();
   const email = $("#signupEmail").value.trim().toLowerCase();
@@ -771,6 +840,29 @@ function signup(event) {
   const storeName = $("#signupStore").value.trim();
   if (!name || !email || !password || !storeName) {
     toast("Enter your account and store details");
+    return;
+  }
+  if (authProvider === "supabase" && supabaseClient) {
+    const { data, error } = await supabaseClient.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { full_name: name }
+      }
+    });
+    if (error) {
+      toast(error.message);
+      return;
+    }
+    if (!data.user || !data.session) {
+      toast("Account created. Check email verification, then login.");
+      setAuthMode("login");
+      $("#loginEmail").value = email;
+      return;
+    }
+    const user = ensurePlatformUserFromSupabase(data.user);
+    finishAuthenticatedSession(user, storeName);
+    toast(`Welcome, ${displayUserName(user)}. ${currentStore().name} is ready.`);
     return;
   }
   if (platform.users.some((user) => user.email === email)) {
@@ -793,19 +885,25 @@ function signup(event) {
     ownerId: user.id,
     useLegacy: platform.stores.length === 0
   });
-  platform.session = { userId: user.id, storeId: store.id };
-  state = getActiveStoreState();
-  savePlatform();
-  hideAuth();
-  renderShell();
-  setView("billing");
+  finishAuthenticatedSession(user, store.name);
   toast(`Welcome, ${user.name}. ${store.name} is ready.`);
 }
 
-function login(event) {
+async function login(event) {
   event.preventDefault();
   const email = $("#loginEmail").value.trim().toLowerCase();
   const password = $("#loginPassword").value;
+  if (authProvider === "supabase" && supabaseClient) {
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error || !data.user) {
+      toast(error?.message || "Login failed. Check email and password.");
+      return;
+    }
+    const user = ensurePlatformUserFromSupabase(data.user);
+    finishAuthenticatedSession(user);
+    toast(`Logged in to ${currentStore().name}`);
+    return;
+  }
   const user = platform.users.find((item) => item.email === email && item.password === passwordToken(password));
   if (!user) {
     toast("Login failed. Check email and password.");
@@ -816,16 +914,14 @@ function login(event) {
     const store = createStore({ name: `${user.name}'s Store`, ownerId: user.id });
     stores.push(store);
   }
-  platform.session = { userId: user.id, storeId: stores[0].id };
-  state = getActiveStoreState();
-  savePlatform();
-  hideAuth();
-  renderShell();
-  setView("billing");
+  finishAuthenticatedSession(user);
   toast(`Logged in to ${currentStore().name}`);
 }
 
-function logout() {
+async function logout() {
+  if (authProvider === "supabase" && supabaseClient) {
+    await supabaseClient.auth.signOut();
+  }
   platform.session = { userId: null, storeId: null };
   savePlatform();
   cart = [];
@@ -1223,8 +1319,15 @@ async function registerServiceWorker() {
   }
 }
 
-function boot() {
+async function boot() {
   bindEvents();
+  const session = await initializeSupabaseAuth();
+  if (session?.user) {
+    const user = ensurePlatformUserFromSupabase(session.user);
+    finishAuthenticatedSession(user);
+    registerServiceWorker();
+    return;
+  }
   if (!currentUser() || !currentStore()) {
     showAuth(platform.users.length ? "login" : "signup");
   } else {

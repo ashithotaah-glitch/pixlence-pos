@@ -46,7 +46,7 @@
             <label>First store name<input id="signupStore" placeholder="Lucky Pet Shop" required></label>
             <button class="button primary" type="submit">Create workspace</button>
           </form>
-          <p class="auth-note">Prototype login is stored locally for this first platform build. Next phase can replace this adapter with Supabase Auth.</p>
+          <p class="auth-note" id="authNote">Checking secure login configuration...</p>
         </div>
       </div>
     </section>
@@ -392,6 +392,7 @@
     </div>
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://unpkg.com/@zxing/library@0.21.3/umd/index.min.js"></script>
     <script src="./app.js" type="module"></script>
   </body>
