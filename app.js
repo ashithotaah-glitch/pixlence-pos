@@ -444,10 +444,11 @@ function enqueueSync(channel, event, payload) {
   });
 }
 
-function upsertProduct(event) {
+async function upsertProduct(event) {
   event.preventDefault();
   const id = $("#productId").value || crypto.randomUUID();
   const existing = state.products.find((product) => product.id === id);
+  const shouldPublish = $("#publishWebsite")?.checked ?? true;
   const product = {
     id,
     name: $("#productName").value.trim(),
@@ -460,7 +461,10 @@ function upsertProduct(event) {
     stock: Number($("#productStock").value || 0),
     tax: Number($("#productTax").value || 0),
     image: $("#productImage").value.trim(),
-    lowStock: existing?.lowStock || 5
+    lowStock: existing?.lowStock || 5,
+    websiteId: existing?.websiteId || null,
+    websiteUrl: existing?.websiteUrl || "",
+    websiteStatus: existing?.websiteStatus || "Local"
   };
   if (!product.name || !product.sku || !product.barcode) {
     toast("Name, SKU, and barcode are required");
@@ -471,8 +475,10 @@ function upsertProduct(event) {
     toast("SKU or barcode already exists");
     return;
   }
+  let savedProduct = product;
   if (existing) {
     Object.assign(existing, product);
+    savedProduct = existing;
   } else {
     state.products.unshift(product);
     state.movements.unshift({
@@ -488,10 +494,60 @@ function upsertProduct(event) {
   event.target.reset();
   $("#productId").value = "";
   $("#productTax").value = "18";
+  $("#publishWebsite").checked = true;
   $("#productFormTitle").textContent = "Add product";
   saveState();
   renderAll();
-  toast("Product saved");
+  toast("Product saved to inventory");
+
+  if (shouldPublish) {
+    await publishProductToWebsite(savedProduct, existing ? "update" : "create");
+  }
+}
+
+async function publishProductToWebsite(product, mode = "update") {
+  product.websiteStatus = "Publishing";
+  enqueueSync("WooCommerce", `website.product.${mode}.requested`, {
+    sku: product.sku,
+    barcode: product.barcode,
+    stock: product.stock
+  });
+  saveState();
+  renderAll();
+
+  try {
+    const response = await fetch("/api/woocommerce/product", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ product, mode })
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.message || `HTTP ${response.status}`);
+    }
+    product.websiteId = payload.product?.id || product.websiteId;
+    product.websiteUrl = payload.product?.permalink || product.websiteUrl;
+    product.websiteStatus = "Published";
+    enqueueSync("WooCommerce", `website.product.${payload.action || mode}.completed`, {
+      sku: product.sku,
+      website_id: product.websiteId,
+      permalink: product.websiteUrl,
+      stock: product.stock
+    });
+    saveState();
+    renderAll();
+    toast("Product is live on website");
+  } catch (error) {
+    product.websiteStatus = "Publish failed";
+    enqueueSync("WooCommerce", "website.product.publish.failed", {
+      sku: product.sku,
+      barcode: product.barcode,
+      message: error.message
+    });
+    saveState();
+    renderAll();
+    toast(`Saved locally. Website publish failed: ${error.message}`);
+  }
 }
 
 function editProduct(id) {
@@ -509,10 +565,11 @@ function editProduct(id) {
   $("#productStock").value = product.stock;
   $("#productTax").value = product.tax;
   $("#productImage").value = product.image || "";
+  $("#publishWebsite").checked = true;
   $("#productFormTitle").textContent = "Edit product";
 }
 
-function postStock(event) {
+async function postStock(event) {
   event.preventDefault();
   const product = state.products.find((item) => item.id === $("#stockProduct").value);
   if (!product) return;
@@ -543,6 +600,9 @@ function postStock(event) {
   saveState();
   renderAll();
   toast("Stock movement posted");
+  if (product.websiteId || product.websiteStatus === "Published") {
+    await publishProductToWebsite(product, "stock");
+  }
 }
 
 function saveConnector(event) {
@@ -702,9 +762,19 @@ function renderProductTable() {
       <td>${escapeHtml(product.barcode)}</td>
       <td>${money.format(product.price)}</td>
       <td>${product.stock}</td>
+      <td>${renderWebsiteStatus(product)}</td>
       <td><button class="button subtle" data-edit="${product.id}" type="button">Edit</button></td>
     </tr>
-  `).join("") : `<tr><td colspan="6">No products yet.</td></tr>`;
+  `).join("") : `<tr><td colspan="7">No products yet.</td></tr>`;
+}
+
+function renderWebsiteStatus(product) {
+  const status = product.websiteStatus || "Local";
+  const className = status === "Published" ? "published" : status.includes("failed") ? "failed" : "";
+  const label = status === "Published" && product.websiteUrl
+    ? `<a href="${escapeAttr(product.websiteUrl)}" target="_blank" rel="noopener">Published</a>`
+    : escapeHtml(status);
+  return `<span class="status-pill ${className}">${label}</span>`;
 }
 
 function renderInventory() {

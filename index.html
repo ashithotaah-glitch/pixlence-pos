@@ -119,7 +119,7 @@
               <div class="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>SKU</th><th>Product</th><th>Barcode</th><th>Price</th><th>Stock</th><th></th></tr>
+                    <tr><th>SKU</th><th>Product</th><th>Barcode</th><th>Price</th><th>Stock</th><th>Website</th><th></th></tr>
                   </thead>
                   <tbody id="productTable"></tbody>
                 </table>
@@ -149,6 +149,14 @@
                 <label>Tax %<input id="productTax" type="number" min="0" step="0.01" value="18"></label>
               </div>
               <label>Image URL<input id="productImage" placeholder="Optional product image"></label>
+              <label class="check-row">
+                <input id="publishWebsite" type="checkbox" checked>
+                <span>
+                  Publish to connected website
+                  <small>Create/update this product on WooCommerce and sync opening stock.</small>
+                </span>
+              </label>
+              <p class="form-note" id="productPublishNote">New scanned products are saved to POS inventory first, then published through the secure backend connector.</p>
               <button class="button primary" type="submit">Save product</button>
             </form>
           </div>
